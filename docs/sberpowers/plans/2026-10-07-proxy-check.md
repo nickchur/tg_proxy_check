@@ -12,10 +12,13 @@
 
 ## Глобальные ограничения
 - Бесплатный тариф Workers: вызов ≤ 10 мс CPU (ожидание сокета не считается), ≤ 50 подзапросов. Cron `*/5 * * * *`.
-- Хранилище — бакет R2 `tg-proxy-check`, binding `STATE`, ключ `proxy:<host>`, значение `{"fails":n,"down":bool}`.
+- Хранилище — бакет R2 `tg-proxy-check`, binding `STATE`, ключ `proxy:<host>:<port>`, значение `{"fails":n,"down":bool}`.
 - Binding `NOTIFY` — service binding на Worker `tg-digest`; секрет `ADMIN_KEY` (тот же, что у tg-digest); `PROXIES` — plain text.
 - Скрипты хостов — POSIX sh, только curl и systemctl. Пути и cron на стенде прежние: `/usr/local/bin/mtg-check`, `/etc/cron.d/mtg-check`.
 - Публичный репозиторий: ни IP, ни ключей, ни имени бота (в примерах — `@your_bot`, `proxy1.example.org`).
+  Исключение — локальный `127.0.0.1` (SOCKS-выход на стенде); проверки «нет IP» его отфильтровывают: `… | grep -v 127.0.0.1`.
+- Ошибки не глотать: сбой уведомления или хранилища не должен оставлять записанное состояние без отправленного
+  сообщения; итог вызова Worker'а с любым сбоем — брошенное исключение (видно в аналитике Cloudflare).
 - Node 18+, без npm-зависимостей; `package.json` = `{"type":"module"}`.
 - Каждый файл с кодом начинается с двух строк комментария: что это; `YYYY-MM-DD HH:MM · vX.Y · Nick Churkin` (время MSK, `TZ=Europe/Moscow date '+%F %H:%M'`).
 - Коммиты: автор Nick Churkin <nickchur@users.noreply.github.com> (уже в `git config` репозитория), в конце сообщения строка
@@ -233,7 +236,7 @@ exit 0
 
 **Критерии выхода:**
 - `sh -n host/mtg-check` без ошибок; `test -x host/mtg-check`
-- в файлах нет IP и ключей: `grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|key=[^<]' host/*` пуст
+- в файлах нет IP и ключей: `grep -nE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+|key=[^<]' host/* | grep -v 127.0.0.1` пуст
 
 ---
 
@@ -342,7 +345,7 @@ Worker: R2-бакет `tg-proxy-check` (binding `STATE`), service binding `NOTIF
 `node test/test_check.mjs`
 ````
 - [ ] Запусти `bash -n deploy.sh && echo syntax-ok` — ожидай `syntax-ok`
-- [ ] Запусти `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' --exclude-dir=.git . ; echo rc=$?` — ожидай только `rc=1`
+- [ ] Запусти `grep -rnE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' --exclude-dir=.git . | grep -v 127.0.0.1; echo rc=$?` — ожидай только `rc=1`
 - [ ] Commit: `feat(pxc-2.1): выкладка одной командой и README (REQ-pxc-08)`
 
 **Критерии выхода:**
