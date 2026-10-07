@@ -1,7 +1,7 @@
-// Тест логики tg-proxy-check в node: сокет, R2 и binding подменены.
-// 2026-10-07 21:20 · v1.1 · Nick Churkin
+// Тест логики tg-proxy-check в node: сокет, R2 и Telegram API подменены.
+// 2026-10-08 00:21 · v1.2 · Nick Churkin
 import assert from 'node:assert/strict';
-import worker, { parseProxies, nextState, checkProxy, FAILS } from '../worker.js';
+import worker, { parseProxies, nextState, checkProxy, FAILS, chunks, TG_LIMIT } from '../worker.js';
 
 assert.deepEqual(parseProxies(''), []);
 assert.deepEqual(parseProxies(undefined), []);
@@ -23,24 +23,27 @@ assert.deepEqual(nextState({ fails: 2, down: true }, false), { fails: 3, down: t
 assert.deepEqual(nextState({ fails: 3, down: true }, true), { fails: 0, down: false });
 assert.deepEqual(nextState({ fails: 1, down: false }, true), { fails: 0, down: false });
 
-// подмены: R2 в памяти, binding копит тексты, сокет открывается или нет по флагу
+// подмена Telegram: копит отправленные тексты; ответ задаётся tg.reply
+const tg = { sent: [], reply: { status: 200, body: { ok: true } } };
+globalThis.fetch = async (url, init) => {
+  assert.match(String(url), /^https:\/\/api\.telegram\.org\/botT0KEN\/sendMessage$/);
+  assert.equal(init.method, 'POST');
+  const body = JSON.parse(init.body);
+  assert.equal(body.chat_id, '42');
+  tg.sent.push(body.text);
+  return new Response(JSON.stringify(tg.reply.body), { status: tg.reply.status });
+};
+
+// подмены: R2 в памяти, сокет открывается или нет по флагу
 const store = new Map();
 let puts = 0;
-const sent = [];
 const env = {
   ADMIN_KEY: 'k',
+  BOT_TOKEN: 'T0KEN',
+  OWNER_ID: '42',
   STATE: {
     get: async (k) => (store.has(k) ? { text: async () => store.get(k) } : null),
     put: async (k, v) => { puts++; store.set(k, v); },
-  },
-  NOTIFY: {
-    fetch: async (url, init) => {
-      assert.equal(init?.method, 'POST');
-      assert.equal(new URL(url).pathname, '/notify');
-      assert.equal(new URL(url).searchParams.get('key'), 'k');
-      sent.push(init.body);
-      return new Response('ok');
-    },
   },
 };
 let up = false;
@@ -51,39 +54,29 @@ const connect = () => ({
 const p = { hostname: 'a.example.org', port: 443 };
 
 up = true; await checkProxy(env, p, connect);          // живой с самого начала — ничего не пишем
-assert.equal(puts, 0); assert.equal(sent.length, 0);
+assert.equal(puts, 0); assert.equal(tg.sent.length, 0);
 up = false; await checkProxy(env, p, connect);         // 1-я неудача — пишем, молчим
-assert.equal(sent.length, 0);
+assert.equal(tg.sent.length, 0);
 await checkProxy(env, p, connect);                     // 2-я — ⚠️
-assert.equal(sent.length, 1); assert.match(sent[0], /⚠️.*a\.example\.org:443.*10 мин/);
+assert.equal(tg.sent.length, 1); assert.match(tg.sent[0], /⚠️.*a\.example\.org:443.*10 мин/);
 await checkProxy(env, p, connect);                     // 3-я — молчим
-assert.equal(sent.length, 1);
+assert.equal(tg.sent.length, 1);
 up = true; await checkProxy(env, p, connect);          // ожил — ✅
-assert.equal(sent.length, 2); assert.match(sent[1], /✅.*a\.example\.org:443/);
+assert.equal(tg.sent.length, 2); assert.match(tg.sent[1], /✅.*a\.example\.org:443/);
 const before = puts;
 await checkProxy(env, p, connect);                     // живой дальше — не пишем
 assert.equal(puts, before);
 assert.deepEqual(JSON.parse(store.get('proxy:a.example.org:443')), { fails: 0, down: false });
 
-// REQ-pxc-10: /notify отвечает 500 на 2-й неудаче -> checkProxy бросает, в хранилище остаётся {fails:1, down:false}
+// REQ-pxc-10: Telegram отвечает ошибкой на 2-й неудаче -> checkProxy бросает, в хранилище остаётся {fails:1, down:false}
 const storeFail = new Map();
-let notifyStatus = 500;
-const sentFail = [];
 const envFail = {
   ADMIN_KEY: 'k',
+  BOT_TOKEN: 'T0KEN',
+  OWNER_ID: '42',
   STATE: {
     get: async (k) => (storeFail.has(k) ? { text: async () => storeFail.get(k) } : null),
     put: async (k, v) => { storeFail.set(k, v); },
-  },
-  NOTIFY: {
-    fetch: async (url, init) => {
-      assert.equal(init?.method, 'POST');
-      if (notifyStatus !== 200) {
-        return new Response('internal error', { status: notifyStatus });
-      }
-      sentFail.push(init.body);
-      return new Response('ok');
-    },
   },
 };
 const failConnect = () => ({
@@ -93,14 +86,14 @@ const failConnect = () => ({
 const pFail = { hostname: 'a.example.org', port: 443 };
 await checkProxy(envFail, pFail, failConnect);
 assert.deepEqual(JSON.parse(storeFail.get('proxy:a.example.org:443')), { fails: 1, down: false });
-notifyStatus = 500;
-await assert.rejects(checkProxy(envFail, pFail, failConnect), /notify: 500/);
+tg.reply = { status: 400, body: { ok: false, description: 'Bad Request: chat not found' } };
+await assert.rejects(checkProxy(envFail, pFail, failConnect), /telegram: Bad Request: chat not found/);
 assert.deepEqual(JSON.parse(storeFail.get('proxy:a.example.org:443')), { fails: 1, down: false });
-assert.equal(sentFail.length, 0);
-notifyStatus = 200;
+tg.reply = { status: 200, body: { ok: true } };
+tg.sent.length = 0;
 await checkProxy(envFail, pFail, failConnect);
-assert.equal(sentFail.length, 1);
-assert.match(sentFail[0], /⚠️.*a\.example\.org:443/);
+assert.equal(tg.sent.length, 1);
+assert.match(tg.sent[0], /⚠️.*a\.example\.org:443/);
 assert.deepEqual(JSON.parse(storeFail.get('proxy:a.example.org:443')), { fails: 2, down: true });
 
 // Причина синхронного броска connect логируется в console.error
@@ -111,11 +104,12 @@ try {
   const storeConn = new Map();
   const envConn = {
     ADMIN_KEY: 'k',
+    BOT_TOKEN: 'T0KEN',
+    OWNER_ID: '42',
     STATE: {
       get: async () => null,
       put: async (k, v) => { storeConn.set(k, v); },
     },
-    NOTIFY: { fetch: async () => new Response('ok') },
   };
   await checkProxy(envConn, p, () => { throw new Error('immediate refusal'); });
   assert.equal(connectLogged, 'connect a.example.org:443: immediate refusal');
@@ -129,6 +123,8 @@ let connectedHost = null;
 const schedStore = new Map();
 const envSched = {
   ADMIN_KEY: 'k',
+  BOT_TOKEN: 'T0KEN',
+  OWNER_ID: '42',
   PROXIES: 'a.example.org:443,b.example.org:abc',
   SOCKETS: {
     connect: (proxy) => {
@@ -140,7 +136,6 @@ const envSched = {
     get: async (k) => (schedStore.has(k) ? { text: async () => schedStore.get(k) } : null),
     put: async (k, v) => { schedStore.set(k, v); },
   },
-  NOTIFY: { fetch: async () => new Response('ok') },
 };
 const schedLogged = [];
 const origErrSched = console.error;
@@ -152,5 +147,30 @@ try {
 }
 assert.equal(connectedHost, 'a.example.org');
 assert.ok(schedLogged.some((m) => m.includes('прокси b.example.org:abc: PROXIES: неверный порт в «b.example.org:abc»')));
+
+// REQ-pxc-13: длинный текст — несколькими сообщениями без потерь
+const long = 'а'.repeat(9000);
+assert.deepEqual(chunks(long).map((c) => c.length), [4000, 4000, 1000]);
+assert.equal(chunks(long).join(''), long);
+assert.deepEqual(chunks('коротко'), ['коротко']);
+
+// REQ-pxc-12: /notify
+const nenv = { ADMIN_KEY: 'k', BOT_TOKEN: 'T0KEN', OWNER_ID: '42' };
+const req = (path, init) => new Request(`https://tg-proxy-check.example.workers.dev${path}`, init);
+tg.sent.length = 0;
+let r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'тест' }), nenv);
+assert.equal(r.status, 200); assert.deepEqual(tg.sent, ['тест']);
+assert.equal((await worker.fetch(req('/notify?key=bad', { method: 'POST', body: 'x' }), nenv)).status, 403);
+assert.equal((await worker.fetch(req('/notify', { method: 'POST', body: 'x' }), nenv)).status, 403);
+assert.equal((await worker.fetch(req('/notify?key=k', { method: 'POST', body: '  ' }), nenv)).status, 400);
+assert.equal((await worker.fetch(req('/notify?key=k'), nenv)).status, 404);
+assert.equal((await worker.fetch(req('/other?key=k', { method: 'POST', body: 'x' }), nenv)).status, 404);
+tg.reply = { status: 400, body: { ok: false, description: 'Bad Request: chat not found' } };
+r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'x' }), nenv);
+assert.equal(r.status, 502); assert.match(await r.text(), /chat not found/);
+tg.reply = { status: 200, body: { ok: true } };
+tg.sent.length = 0;
+await worker.fetch(req('/notify?key=k', { method: 'POST', body: long }), nenv);
+assert.equal(tg.sent.length, 3); assert.equal(tg.sent.join(''), long);
 
 console.log('ok');
