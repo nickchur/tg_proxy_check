@@ -1,5 +1,5 @@
 // tg-proxy-check — раз в 5 минут TCP до каждого прокси из PROXIES; 2 неудачи подряд — ⚠️ владельцу, ожил — ✅.
-// 2026-10-08 00:24 · v1.2 · Nick Churkin
+// 2026-10-08 00:34 · v1.2 · Nick Churkin
 //
 // PROXIES — «host:port,host:port» (порт по умолчанию 443), пусто — проверять нечего.
 // Состояние — R2 `STATE`, ключ `proxy:<host>:<port>` = {fails, down}; пишется только при изменении.
@@ -37,13 +37,20 @@ export const chunks = (text) => {
 };
 
 // Сообщение владельцу в личку от бота мониторинга. Длинное — несколькими сообщениями.
-// ponytail: режем по длине, а не по тегам — HTML-тег на стыке кусков Telegram отвергнет (502 у /notify)
+// длинное — частями и простым текстом: разрез по длине ломал бы HTML-теги, Telegram отверг бы кусок
 export async function sendOwner(env, text) {
-  for (const part of chunks(text)) {
+  const parts = chunks(text);
+  const multi = parts.length > 1;
+  for (const part of parts) {
     const res = await fetch(`https://api.telegram.org/bot${env.BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: env.OWNER_ID, text: part, parse_mode: 'HTML', disable_web_page_preview: true }),
+      body: JSON.stringify({
+        chat_id: env.OWNER_ID,
+        text: part,
+        ...(multi ? {} : { parse_mode: 'HTML' }),
+        disable_web_page_preview: true,
+      }),
     });
     const d = await res.json().catch(() => ({}));
     if (!res.ok || !d.ok) throw new Error(`telegram: ${d.description ?? res.status}`);

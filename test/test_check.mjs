@@ -1,7 +1,7 @@
 // Тест логики tg-proxy-check в node: сокет, R2 и Telegram API подменены.
-// 2026-10-08 00:21 · v1.2 · Nick Churkin
+// 2026-10-08 00:34 · v1.2 · Nick Churkin
 import assert from 'node:assert/strict';
-import worker, { parseProxies, nextState, checkProxy, FAILS, chunks, TG_LIMIT } from '../worker.js';
+import worker, { parseProxies, nextState, checkProxy, FAILS, chunks, TG_LIMIT, sendOwner } from '../worker.js';
 
 assert.deepEqual(parseProxies(''), []);
 assert.deepEqual(parseProxies(undefined), []);
@@ -24,13 +24,14 @@ assert.deepEqual(nextState({ fails: 3, down: true }, true), { fails: 0, down: fa
 assert.deepEqual(nextState({ fails: 1, down: false }, true), { fails: 0, down: false });
 
 // подмена Telegram: копит отправленные тексты; ответ задаётся tg.reply
-const tg = { sent: [], reply: { status: 200, body: { ok: true } } };
+const tg = { sent: [], modes: [], reply: { status: 200, body: { ok: true } } };
 globalThis.fetch = async (url, init) => {
   assert.match(String(url), /^https:\/\/api\.telegram\.org\/botT0KEN\/sendMessage$/);
   assert.equal(init.method, 'POST');
   const body = JSON.parse(init.body);
   assert.equal(body.chat_id, '42');
   tg.sent.push(body.text);
+  tg.modes.push(body.parse_mode);
   return new Response(JSON.stringify(tg.reply.body), { status: tg.reply.status });
 };
 
@@ -91,6 +92,7 @@ await assert.rejects(checkProxy(envFail, pFail, failConnect), /telegram: Bad Req
 assert.deepEqual(JSON.parse(storeFail.get('proxy:a.example.org:443')), { fails: 1, down: false });
 tg.reply = { status: 200, body: { ok: true } };
 tg.sent.length = 0;
+tg.modes.length = 0;
 await checkProxy(envFail, pFail, failConnect);
 assert.equal(tg.sent.length, 1);
 assert.match(tg.sent[0], /⚠️.*a\.example\.org:443/);
@@ -158,8 +160,10 @@ assert.deepEqual(chunks('коротко'), ['коротко']);
 const nenv = { ADMIN_KEY: 'k', BOT_TOKEN: 'T0KEN', OWNER_ID: '42' };
 const req = (path, init) => new Request(`https://tg-proxy-check.example.workers.dev${path}`, init);
 tg.sent.length = 0;
+tg.modes.length = 0;
 let r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'тест' }), nenv);
 assert.equal(r.status, 200); assert.deepEqual(tg.sent, ['тест']);
+assert.deepEqual(tg.modes, ['HTML']);
 assert.equal((await worker.fetch(req('/notify?key=bad', { method: 'POST', body: 'x' }), nenv)).status, 403);
 assert.equal((await worker.fetch(req('/notify', { method: 'POST', body: 'x' }), nenv)).status, 403);
 assert.equal((await worker.fetch(req('/notify?key=k', { method: 'POST', body: '  ' }), nenv)).status, 400);
@@ -168,9 +172,15 @@ assert.equal((await worker.fetch(req('/other?key=k', { method: 'POST', body: 'x'
 tg.reply = { status: 400, body: { ok: false, description: 'Bad Request: chat not found' } };
 r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'x' }), nenv);
 assert.equal(r.status, 502); assert.match(await r.text(), /chat not found/);
+tg.reply = { status: 200, body: { ok: false, description: 'x' } };
+await assert.rejects(sendOwner(nenv, 'msg'), /telegram: x/);
+r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'msg' }), nenv);
+assert.equal(r.status, 502); assert.match(await r.text(), /telegram: x/);
 tg.reply = { status: 200, body: { ok: true } };
 tg.sent.length = 0;
+tg.modes.length = 0;
 await worker.fetch(req('/notify?key=k', { method: 'POST', body: long }), nenv);
 assert.equal(tg.sent.length, 3); assert.equal(tg.sent.join(''), long);
+assert.deepEqual(tg.modes, [undefined, undefined, undefined]);
 
 console.log('ok');
