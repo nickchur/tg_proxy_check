@@ -1,6 +1,6 @@
 # tg_proxy_check
 
-Мониторинг MTProto-прокси (mtg) с уведомлениями в Telegram через бота дайджеста ([tg_news_digest](https://github.com/nickchur/tg_news_digest), `POST /notify`).
+Мониторинг MTProto-прокси (mtg) с уведомлениями в Telegram от своего бота.
 
 | Что | Где | Проверяет |
 |---|---|---|
@@ -12,13 +12,19 @@
 
 ## Настройки
 
-Worker: R2-бакет `tg-proxy-check` (binding `STATE`, ключ `proxy:<host>:<port>`), service binding `NOTIFY` → Worker `tg-digest`, секрет `ADMIN_KEY`,
-`PROXIES` вида `proxy1.example.org:443,proxy2.example.org:443`.
-Хост прокси: `/etc/mtg-check.env` с `NOTIFY=https://<worker tg-digest>/notify?key=<ADMIN_KEY>`.
+Worker: R2-бакет `tg-proxy-check` (binding `STATE`, ключ `proxy:<host>:<port>`), секреты `BOT_TOKEN` (бот мониторинга —
+заведите у @BotFather и напишите ему `/start`, иначе он не сможет написать первым) и `ADMIN_KEY`, `OWNER_ID` (ваш
+числовой id), `PROXIES` вида `proxy1.example.org:443,proxy2.example.org:443`.
+
+`POST https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>`, тело — текст (HTML Telegram можно):
+сообщение владельцу от бота. Ответы: 200 — отправлено, 403 — ключ, 400 — пустое тело, 502 — Telegram не принял.
+Им пользуется скрипт хоста и любые свои скрипты.
+
+Хост прокси: `/etc/mtg-check.env` с `NOTIFY=https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>`.
 
 ## Выкладка
 
-`./deploy.sh` — тест, бакет, Worker с binding'ами и cron, скрипт на хост. Настройки — из секрета `tg-proxy-check`
+`./deploy.sh` — тест, бакет, Worker с binding'ами и cron, скрипт на хост. В конце печатает адрес /notify. Настройки — из секрета `tg-proxy-check`
 (см. заголовок `deploy.sh`).
 
 ## Тест

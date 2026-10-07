@@ -1,8 +1,8 @@
 #!/bin/sh
 # Семейный прокси: mtg жив и обратный туннель доводит до Telegram? Cron раз в 5 мин.
-# 2026-10-07 21:53 · v1.1 · Nick Churkin
-# 2 неудачи подряд — ⚠️ владельцу через /notify дайджеста, ожил — ✅. Состояние — число неудач подряд.
-# /etc/mtg-check.env: NOTIFY=https://<worker tg-digest>/notify?key=<ADMIN_KEY>
+# 2026-10-08 00:22 · v1.2 · Nick Churkin
+# 2 неудачи подряд — ⚠️ владельцу через /notify tg-proxy-check, ожил — ✅. Состояние — число неудач подряд.
+# /etc/mtg-check.env: NOTIFY=https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>
 . /etc/mtg-check.env
 STATE=/var/lib/mtg-check.fails
 was=$(cat $STATE 2>/dev/null || echo 0)

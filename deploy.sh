@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Выкладка tg-proxy-check: Worker на Cloudflare (REST, без wrangler) + скрипт проверки на хост прокси.
-# 2026-10-07 21:53 · v1.1 · Nick Churkin
+# 2026-10-08 00:22 · v1.2 · Nick Churkin
 #
 # Настройки — секрет tg-proxy-check в Bitwarden Secrets Manager (утилита `secret`):
-#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Workers Scripts Edit, R2 Edit), ADMIN_KEY (тот же, что у tg-digest),
+#   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Workers Scripts Edit, R2 Edit), ADMIN_KEY (ключ /notify),
+#   BOT_TOKEN (свой бот мониторинга; владелец пишет ему /start), OWNER_ID (кому слать),
 #   PROXIES («host:port,host:port»), STAND_HOST (ssh-адрес хоста прокси, root).
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -32,7 +33,8 @@ print(json.dumps({
     'compatibility_date': '2026-09-01',
     'bindings': [
         {'type': 'r2_bucket', 'name': 'STATE', 'bucket_name': 'tg-proxy-check'},
-        {'type': 'service', 'name': 'NOTIFY', 'service': 'tg-digest'},
+        {'type': 'secret_text', 'name': 'BOT_TOKEN', 'text': os.environ['BOT_TOKEN']},
+        {'type': 'plain_text', 'name': 'OWNER_ID', 'text': os.environ['OWNER_ID']},
         {'type': 'secret_text', 'name': 'ADMIN_KEY', 'text': os.environ['ADMIN_KEY']},
         {'type': 'plain_text', 'name': 'PROXIES', 'text': os.environ['PROXIES']},
     ],
@@ -45,6 +47,10 @@ echo "worker: ok"
 curl -sS "${AUTH[@]}" -X PUT -H 'Content-Type: application/json' -d '[{"cron":"*/5 * * * *"}]' \
   "$API/workers/scripts/$NAME/schedules" | ok schedules
 echo "cron: ok"
+curl -sS "${AUTH[@]}" -X POST -H 'Content-Type: application/json' -d '{"enabled":true}' \
+  "$API/workers/scripts/$NAME/subdomain" | ok subdomain
+SUB=$(curl -sS "${AUTH[@]}" "$API/workers/subdomain" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["subdomain"])')
+echo "notify: https://$NAME.$SUB.workers.dev/notify"
 
 ssh "$STAND_HOST" test -f /etc/mtg-check.env || { echo "нет /etc/mtg-check.env на $STAND_HOST — создай его (NOTIFY=…)" >&2; exit 1; }
 scp -q host/mtg-check "$STAND_HOST:/usr/local/bin/mtg-check"
