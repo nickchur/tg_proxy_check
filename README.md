@@ -12,12 +12,13 @@
 
 ## Настройки
 
-Worker: R2-бакет `tg-proxy-check` (binding `STATE`, ключ `proxy:<host>:<port>`), секреты `BOT_TOKEN` (бот мониторинга —
-заведите у @BotFather и напишите ему `/start`, иначе он не сможет написать первым) и `ADMIN_KEY`, `OWNER_ID` (ваш
-числовой id), `PROXIES` вида `proxy1.example.org:443,proxy2.example.org:443`.
+Worker: R2-бакет `tg-proxy-check` (binding `STATE`, ключ `proxy:<host>:<port>`); секреты `BOT_TOKEN` (бот мониторинга —
+заведите у @BotFather и напишите ему `/start`, иначе он не сможет написать первым) и `ADMIN_KEY`; переменные `OWNER_ID` (ваш
+числовой id) и `PROXIES` вида `proxy1.example.org:443,proxy2.example.org:443`.
 
 `POST https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>`, тело — текст (HTML Telegram можно):
 сообщение владельцу от бота. Ответы: 200 — отправлено, 403 — ключ, 400 — пустое тело, 502 — Telegram не принял.
+Текст длиннее 4000 символов уходит несколькими сообщениями простым текстом (без HTML).
 Им пользуется скрипт хоста и любые свои скрипты.
 
 Хост прокси: `/etc/mtg-check.env` с `NOTIFY=https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>`.

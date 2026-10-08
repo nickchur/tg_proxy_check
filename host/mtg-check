@@ -1,11 +1,11 @@
 #!/bin/sh
 # Семейный прокси: mtg жив и обратный туннель доводит до Telegram? Cron раз в 5 мин.
-# 2026-10-08 00:22 · v1.2 · Nick Churkin
+# 2026-10-08 08:53 · v1.3 · Nick Churkin
 # 2 неудачи подряд — ⚠️ владельцу через /notify tg-proxy-check, ожил — ✅. Состояние — число неудач подряд.
 # /etc/mtg-check.env: NOTIFY=https://tg-proxy-check.<subdomain>.workers.dev/notify?key=<ADMIN_KEY>
 . /etc/mtg-check.env
 STATE=/var/lib/mtg-check.fails
-was=$(cat $STATE 2>/dev/null || echo 0)
+was=$(cat "$STATE" 2>/dev/null || echo 0)
 if ! systemctl is-active -q mtg; then why="служба mtg не работает"
 elif ! curl -s -m 15 -o /dev/null --socks5-hostname 127.0.0.1:1080 https://api.telegram.org; then why="туннель не доводит до Telegram"
 else why=""; fi
@@ -17,7 +17,7 @@ elif [ "$now" -eq 0 ] && [ "$was" -ge 2 ]; then
   msg="✅ Прокси Telegram снова работает"
 fi
 if [ -n "$msg" ]; then
-  curl -sf -m 30 -o /dev/null --data-binary "$msg" "$NOTIFY" || exit 1
+  printf 'url = "%s"\n' "$NOTIFY" | curl -sf -m 30 -o /dev/null -K - --data-binary "$msg" || exit 1
 fi
-echo $now > $STATE
+echo $now > "$STATE"
 exit 0

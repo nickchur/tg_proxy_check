@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Выкладка tg-proxy-check: Worker на Cloudflare (REST, без wrangler) + скрипт проверки на хост прокси.
-# 2026-10-08 00:22 · v1.2 · Nick Churkin
+# 2026-10-08 08:53 · v1.3 · Nick Churkin
 #
 # Настройки — секрет tg-proxy-check в Bitwarden Secrets Manager (утилита `secret`):
 #   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN (Workers Scripts Edit, R2 Edit), ADMIN_KEY (ключ /notify),
@@ -22,8 +22,11 @@ printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$HDR"
 AUTH=(-H @"$HDR")
 ok() { python3 -c 'import json,sys; d=json.load(sys.stdin); d["success"] or sys.exit(sys.argv[1] + ": " + str(d["errors"]))' "$1"; }
 
-curl -sS "${AUTH[@]}" "$API/r2/buckets/$NAME" | grep -q '"success":true' ||
-  curl -sS "${AUTH[@]}" -H 'Content-Type: application/json' -d "{\"name\":\"$NAME\"}" "$API/r2/buckets" | ok bucket
+case $(curl -sS -o /dev/null -w '%{http_code}' "${AUTH[@]}" "$API/r2/buckets/$NAME") in
+  200) ;;
+  404) curl -sS "${AUTH[@]}" -H 'Content-Type: application/json' -d "{\"name\":\"$NAME\"}" "$API/r2/buckets" | ok bucket ;;
+  *) echo "R2: не удалось проверить бакет $NAME" >&2; exit 1 ;;
+esac
 echo "бакет: ok"
 
 python3 - > "$META" <<'PY'
@@ -49,12 +52,17 @@ curl -sS "${AUTH[@]}" -X PUT -H 'Content-Type: application/json' -d '[{"cron":"*
 echo "cron: ok"
 curl -sS "${AUTH[@]}" -X POST -H 'Content-Type: application/json' -d '{"enabled":true}' \
   "$API/workers/scripts/$NAME/subdomain" | ok subdomain
-SUB=$(curl -sS "${AUTH[@]}" "$API/workers/subdomain" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["subdomain"])')
+SUB=$(curl -sS "${AUTH[@]}" "$API/workers/subdomain" | python3 -c 'import json,sys; d=json.load(sys.stdin); s=d["success"] and (d.get("result") or {}).get("subdomain"); s or sys.exit("subdomain: нет поддомена workers.dev: " + str(d.get("errors"))); print(s)')
 echo "notify: https://$NAME.$SUB.workers.dev/notify"
 
-ssh "$STAND_HOST" test -f /etc/mtg-check.env || { echo "нет /etc/mtg-check.env на $STAND_HOST — создай его (NOTIFY=…)" >&2; exit 1; }
-scp -q host/mtg-check "$STAND_HOST:/usr/local/bin/mtg-check"
+rc=0; ssh "$STAND_HOST" test -f /etc/mtg-check.env || rc=$?
+case $rc in
+  0) ;;
+  1) echo "нет /etc/mtg-check.env на $STAND_HOST — создай его (NOTIFY=…)" >&2; exit 1 ;;
+  *) echo "ssh $STAND_HOST: ошибка $rc" >&2; exit 1 ;;
+esac
+scp -q host/mtg-check "$STAND_HOST:/usr/local/bin/mtg-check.new"
 scp -q host/mtg-check.cron "$STAND_HOST:/etc/cron.d/mtg-check"
-ssh "$STAND_HOST" 'chmod 755 /usr/local/bin/mtg-check && chmod 644 /etc/cron.d/mtg-check'
+ssh "$STAND_HOST" 'chmod 755 /usr/local/bin/mtg-check.new && mv /usr/local/bin/mtg-check.new /usr/local/bin/mtg-check && chmod 644 /etc/cron.d/mtg-check'
 echo "хост: ok"
 echo "выложен: Worker $NAME (cron */5), mtg-check на хосте прокси"

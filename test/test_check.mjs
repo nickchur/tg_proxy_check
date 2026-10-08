@@ -1,5 +1,5 @@
 // Тест логики tg-proxy-check в node: сокет, R2 и Telegram API подменены.
-// 2026-10-08 00:34 · v1.2 · Nick Churkin
+// 2026-10-08 08:53 · v1.3 · Nick Churkin
 import assert from 'node:assert/strict';
 import worker, { parseProxies, nextState, checkProxy, FAILS, chunks, TG_LIMIT, sendOwner } from '../worker.js';
 
@@ -169,13 +169,19 @@ assert.equal((await worker.fetch(req('/notify', { method: 'POST', body: 'x' }), 
 assert.equal((await worker.fetch(req('/notify?key=k', { method: 'POST', body: '  ' }), nenv)).status, 400);
 assert.equal((await worker.fetch(req('/notify?key=k'), nenv)).status, 404);
 assert.equal((await worker.fetch(req('/other?key=k', { method: 'POST', body: 'x' }), nenv)).status, 404);
-tg.reply = { status: 400, body: { ok: false, description: 'Bad Request: chat not found' } };
-r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'x' }), nenv);
-assert.equal(r.status, 502); assert.match(await r.text(), /chat not found/);
-tg.reply = { status: 200, body: { ok: false, description: 'x' } };
-await assert.rejects(sendOwner(nenv, 'msg'), /telegram: x/);
-r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'msg' }), nenv);
-assert.equal(r.status, 502); assert.match(await r.text(), /telegram: x/);
+const origErrNotify = console.error;
+console.error = () => {};
+try {
+  tg.reply = { status: 400, body: { ok: false, description: 'Bad Request: chat not found' } };
+  r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'x' }), nenv);
+  assert.equal(r.status, 502); assert.match(await r.text(), /chat not found/);
+  tg.reply = { status: 200, body: { ok: false, description: 'x' } };
+  await assert.rejects(sendOwner(nenv, 'msg'), /telegram: x/);
+  r = await worker.fetch(req('/notify?key=k', { method: 'POST', body: 'msg' }), nenv);
+  assert.equal(r.status, 502); assert.match(await r.text(), /telegram: x/);
+} finally {
+  console.error = origErrNotify;
+}
 tg.reply = { status: 200, body: { ok: true } };
 tg.sent.length = 0;
 tg.modes.length = 0;
